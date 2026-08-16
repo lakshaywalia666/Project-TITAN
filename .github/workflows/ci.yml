@@ -64,6 +64,7 @@ jobs:
           test "$(docker run --rm titan:ci id -u)" = "10001"
           docker run --detach --name titan-ci \
             --env TITAN_ADMIN_TOKEN=ci-only-validation-token-00000000 \
+            --env TITAN_CONTROL_HOST=0.0.0.0 \
             --publish 127.0.0.1:18090:8090 \
             titan:ci
           cleanup() {
