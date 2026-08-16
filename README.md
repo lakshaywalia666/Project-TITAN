@@ -409,6 +409,18 @@ Read the [scaling boundary](docs/architecture/scaling-boundary.md) before adding
 replicas. SQLite is intentionally single-writer; a production multi-replica control
 plane requires a PostgreSQL repository layer and controller leader election.
 
+### Published container image
+
+The `container-image` workflow publishes the backend image to
+`ghcr.io/lakshaywalia666/project-titan`. A `main` build receives `edge` and
+`sha-<commit>` tags; a stable `vX.Y.Z` tag also receives semantic-version and
+`latest` tags. Every publication includes BuildKit provenance and an SBOM, is
+keyless-signed with GitHub OIDC, and records the immutable `image@sha256:digest` as
+a workflow artifact. Deploy by digest rather than by a movable tag.
+
+The first GHCR package may need to be changed from private to public once in the
+GitHub package settings before an unauthenticated cloud host can pull it.
+
 ## Signed multi-cloud smoke flow
 
 The same public, digest-pinned image is used on AWS, Azure and GCP. Application ports
@@ -418,8 +430,9 @@ stored in OpenTofu state.
 
 ```mermaid
 flowchart TD
-    Commit["Push tested source to GitHub"] --> Tag["Push version tag vX.Y.Z"]
-    Tag --> ReleaseTests["Run complete backend release tests"]
+    Commit["Merge tested source to main"] --> ReleaseTests["Run complete backend release tests"]
+    Commit -. "optional stable release" .-> Tag["Push version tag vX.Y.Z"]
+    Tag --> ReleaseTests
     ReleaseTests --> Image["Build non-root OCI image"]
     Image --> SupplyChain["Generate provenance and SBOM<br/>keyless-sign immutable digest"]
     SupplyChain --> GHCR["Publish public GHCR digest"]
@@ -450,9 +463,9 @@ after every run.
 
 | Workflow | Trigger | Important checks |
 |---|---|---|
-| `ci.yml` | pull requests and `main` pushes | Python compile/tests, container build/non-root UID, Compose model, portal type/lint/build tests, Helm/Kustomize rendering, OpenTofu formatting and validation |
-| `security.yml` | PR, `main` and weekly schedule | Gitleaks secret scan, Trivy image vulnerability scan, SARIF upload and CycloneDX SBOM |
-| `release.yml` | version tags | complete backend tests, immutable GHCR build, provenance, SBOM and keyless Cosign signature |
+| `ci.yml` | pull requests, `main` and manual | Python 3.11/3.12 tests, live container health smoke, Compose model, portal type/lint/build tests, Helm/Kustomize rendering and OpenTofu validation |
+| `security.yml` | PR, `main`, weekly and manual | full-history Gitleaks scan, Trivy policy gate, SARIF upload and retained CycloneDX SBOM |
+| `release.yml` | `main`, version tags and manual | backend release gate, immutable GHCR digest, provenance, SBOM, keyless signature and verification |
 | `cloud-smoke.yml` | manual only | exact confirmation, signature verification, OIDC authentication, one-provider apply, authenticated smoke test and automatic destroy |
 
 Containers run as UID `10001`, drop Linux capabilities, use a read-only root
