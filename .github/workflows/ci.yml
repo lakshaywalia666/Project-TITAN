@@ -4,19 +4,33 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11.19.0"
+
 jobs:
-  test:
+  backend:
+    name: Backend / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Compile
         run: python -m compileall -q src tests
       - name: Test
@@ -25,51 +39,89 @@ jobs:
         run: python -m unittest discover -s tests -v
 
   container:
+    name: Container / build and smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: test
+    timeout-minutes: 20
+    needs: backend
     steps:
-      - uses: actions/checkout@v4
-      - name: Build container without publishing
-        run: docker build --file Containerfile --tag titan:${{ github.sha }} .
-      - name: Verify non-root user
-        run: test "$(docker run --rm titan:${{ github.sha }} id -u)" = "10001"
-      - name: Validate local Compose boot model
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Build loadable test image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Containerfile
+          load: true
+          push: false
+          tags: titan:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+      - name: Verify non-root runtime and API health
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(docker run --rm titan:ci id -u)" = "10001"
+          docker run --detach --name titan-ci \
+            --env TITAN_ADMIN_TOKEN=ci-only-validation-token-00000000 \
+            --publish 127.0.0.1:18090:8090 \
+            titan:ci
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              docker logs titan-ci
+            fi
+            docker rm --force titan-ci >/dev/null 2>&1 || true
+            exit "$status"
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:18090/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "TITAN API did not become healthy" >&2
+          exit 1
+      - name: Validate Compose model
         env:
           TITAN_ADMIN_TOKEN: ci-only-validation-token-00000000
         run: docker compose config --quiet
 
   portal:
+    name: Portal / typecheck, lint and render
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
       run:
         working-directory: portal
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
-          version: 11.19.0
-      - uses: actions/setup-node@v4
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "22"
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: portal/pnpm-lock.yaml
       - name: Install from lockfile
         run: pnpm install --frozen-lockfile
       - name: Type check
-        run: pnpm exec tsc --noEmit --incremental false
+        run: pnpm run typecheck
       - name: Lint
         run: pnpm run lint
       - name: Build and rendered tests
         run: pnpm run test
 
   manifests:
+    name: Manifests / Helm and Kustomize
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
       - name: Render Helm chart
         run: helm template titan platform/helm/titan > /tmp/titan-rendered.yaml
       - name: Render Kustomize base
@@ -78,11 +130,12 @@ jobs:
         run: kubectl kustomize platform/operator > /tmp/titan-operator.yaml
 
   infrastructure:
+    name: Infrastructure / OpenTofu validation
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
         with:
           tofu_version: "1.8.8"
       - name: Validate cloud shell programs

@@ -6,48 +6,74 @@ on:
     branches: [main]
   schedule:
     - cron: "17 3 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
-  security-events: write
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  scan:
+  secrets:
+    name: Secrets / full-history scan
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Secret scan
-        uses: gitleaks/gitleaks-action@v2
+      - name: Scan Git history for secrets
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build container
+
+  container:
+    name: Container / vulnerabilities and SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Build scan image
         run: docker build --file Containerfile --tag titan:scan .
-      - name: Vulnerability and configuration scan
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Generate vulnerability report
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: titan:scan
           format: sarif
           output: trivy.sarif
           severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
           ignore-unfixed: true
-          exit-code: "1"
-      - name: Upload SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
+          exit-code: "0"
+      - name: Upload vulnerability report to code scanning
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: trivy.sarif
       - name: Generate CycloneDX SBOM
-        uses: anchore/sbom-action@v0.17.7
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: titan:scan
           format: cyclonedx-json
           output-file: titan-sbom.cdx.json
-      - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+      - name: Upload security artifacts
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: titan-sbom
-          path: titan-sbom.cdx.json
+          name: titan-security-reports
+          path: |
+            trivy.sarif
+            titan-sbom.cdx.json
           retention-days: 30
+      - name: Enforce vulnerability policy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: titan:scan
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

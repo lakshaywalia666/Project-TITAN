@@ -1,5 +1,7 @@
 name: disposable-cloud-smoke
 
+run-name: Disposable ${{ inputs.provider }} smoke / ${{ github.actor }}
+
 on:
   workflow_dispatch:
     inputs:
@@ -42,14 +44,20 @@ jobs:
       GCP_REGION: ${{ vars.GCP_REGION }}
       GCP_ZONE: ${{ vars.GCP_ZONE }}
     steps:
-      - name: Require exact confirmation
+      - name: Require exact confirmation and immutable image
         shell: bash
-        run: test "$TITAN_CONFIRM" = DEPLOY_AND_DESTROY_TITAN
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+        run: |
+          set -euo pipefail
+          test "$TITAN_CONFIRM" = DEPLOY_AND_DESTROY_TITAN
+          case "$TITAN_IMAGE" in
+            ghcr.io/*@sha256:*) ;;
+            *) echo "Image must be a GHCR reference pinned by sha256 digest" >&2; exit 1 ;;
+          esac
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
         with:
           tofu_version: "1.8.8"
-      - uses: sigstore/cosign-installer@v3.7.0
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Verify this repository's public signed image
         shell: bash
@@ -61,18 +69,18 @@ jobs:
           docker buildx imagetools inspect "$TITAN_IMAGE"
           cosign verify "$TITAN_IMAGE" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/release\\.yml@refs/tags/v[0-9A-Za-z._-]+$"
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/release\\.yml@(refs/heads/main|refs/tags/v[0-9A-Za-z._-]+)$"
 
       - name: Authenticate to AWS with GitHub OIDC
         if: inputs.provider == 'aws'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Authenticate to Azure with GitHub OIDC
         if: inputs.provider == 'azure'
-        uses: azure/login@v2
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -80,7 +88,7 @@ jobs:
 
       - name: Authenticate to Google Cloud with workload identity
         if: inputs.provider == 'gcp'
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}

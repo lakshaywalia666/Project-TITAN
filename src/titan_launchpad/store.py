@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from uuid import uuid4
 
 from titan_launchpad.engine import RecommendationEngine
@@ -26,8 +27,17 @@ class LaunchpadStore:
         connection.execute("PRAGMA busy_timeout = 5000")
         return connection
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(
                 """
@@ -74,7 +84,7 @@ class LaunchpadStore:
     ) -> tuple[dict[str, Any], bool]:
         request_hash = _hash_document(spec.to_document())
         operation = "assessment:create"
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             replay = self._idempotent_result(
                 connection,
@@ -127,7 +137,7 @@ class LaunchpadStore:
             {"assessment_id": assessment_id, "provider": provider}
         )
         operation = "plan:create"
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             replay = self._idempotent_result(
                 connection,
@@ -193,7 +203,7 @@ class LaunchpadStore:
     def list_assessments(
         self, *, actor: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             if actor is None:
                 rows = connection.execute(
                     """
@@ -215,7 +225,7 @@ class LaunchpadStore:
     def _get_document(self, table: str, item_id: str, message: str) -> dict[str, Any]:
         if table not in {"launchpad_assessments", "launchpad_plans"}:
             raise ValueError("invalid table")
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 f"SELECT document_json FROM {table} WHERE id = ?", (item_id,)
             ).fetchone()
