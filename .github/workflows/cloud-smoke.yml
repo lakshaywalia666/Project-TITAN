@@ -45,11 +45,11 @@ jobs:
       - name: Require exact confirmation
         shell: bash
         run: test "$TITAN_CONFIRM" = DEPLOY_AND_DESTROY_TITAN
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: "1.8.8"
-      - uses: sigstore/cosign-installer@v3.7.0
+      - uses: sigstore/cosign-installer@v4.1.2
 
       - name: Verify this repository's public signed image
         shell: bash
@@ -65,14 +65,14 @@ jobs:
 
       - name: Authenticate to AWS with GitHub OIDC
         if: inputs.provider == 'aws'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Authenticate to Azure with GitHub OIDC
         if: inputs.provider == 'azure'
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
