@@ -1,0 +1,111 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Compile
+        run: python -m compileall -q src tests
+      - name: Test
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build container without publishing
+        run: docker build --file Containerfile --tag titan:${{ github.sha }} .
+      - name: Verify non-root user
+        run: test "$(docker run --rm titan:${{ github.sha }} id -u)" = "10001"
+      - name: Validate local Compose boot model
+        env:
+          TITAN_ADMIN_TOKEN: ci-only-validation-token-00000000
+        run: docker compose config --quiet
+
+  portal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: portal/pnpm-lock.yaml
+      - name: Install from lockfile
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm exec tsc --noEmit --incremental false
+      - name: Lint
+        run: pnpm run lint
+      - name: Build and rendered tests
+        run: pnpm run test
+
+  manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Render Helm chart
+        run: helm template titan platform/helm/titan > /tmp/titan-rendered.yaml
+      - name: Render Kustomize base
+        run: kubectl kustomize platform/kubernetes/base > /tmp/titan-kustomize.yaml
+      - name: Render Kubernetes operator
+        run: kubectl kustomize platform/operator > /tmp/titan-operator.yaml
+
+  infrastructure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.8.8"
+      - name: Validate cloud shell programs
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n infrastructure/opentofu/scripts/cloud-smoke.sh
+          sed \
+            -e 's|${titan_image}|ghcr.io/example/titan@sha256:0000000000000000000000000000000000000000000000000000000000000000|g' \
+            -e 's|$${|${|g' \
+            infrastructure/opentofu/shared/bootstrap-titan.sh.tftpl | bash -n
+      - name: Validate disposable cloud modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          tofu fmt -check -recursive infrastructure/opentofu
+          for module in infrastructure/opentofu/aws infrastructure/opentofu/azure infrastructure/opentofu/gcp; do
+            tofu -chdir="$module" init -backend=false -input=false
+            tofu -chdir="$module" validate
+          done
+          for module in infrastructure/opentofu/launchpad/aws infrastructure/opentofu/launchpad/azure infrastructure/opentofu/launchpad/gcp; do
+            tofu -chdir="$module" init -backend=false -input=false
+            tofu -chdir="$module" validate
+            tofu -chdir="$module" plan -input=false -lock=false -var-file=example.tfvars
+          done

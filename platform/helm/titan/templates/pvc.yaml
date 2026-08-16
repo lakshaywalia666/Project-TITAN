@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "titan.fullname" . }}-data
+  labels:
+    {{- include "titan.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.controlPlane.storageClassName }}
+  storageClassName: {{ .Values.controlPlane.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.controlPlane.storage }}
+

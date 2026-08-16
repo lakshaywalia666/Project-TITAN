@@ -1,0 +1,51 @@
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: nvidia-a10
+spec:
+  nodeLabels:
+    accelerator.titan.dev/class: nvidia-a10
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: titan-training
+spec:
+  namespaceSelector: {}
+  cohort: titan-gpu
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "nvidia.com/gpu"]
+      flavors:
+        - name: nvidia-a10
+          resources:
+            - {name: cpu, nominalQuota: "32"}
+            - {name: memory, nominalQuota: 128Gi}
+            - {name: nvidia.com/gpu, nominalQuota: "2"}
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: titan-training
+  namespace: titan-system
+spec:
+  clusterQueue: titan-training
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: titan-checkpoint-lab
+  namespace: titan-system
+  labels: {kueue.x-k8s.io/queue-name: titan-training}
+spec:
+  suspend: true
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: trainer
+          image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+          command: ["python", "-c", "import torch; print(torch.cuda.get_device_name(0)); print(torch.ones(8, device='cuda').sum())"]
+          resources:
+            requests: {cpu: "2", memory: 8Gi, nvidia.com/gpu: "1"}
+            limits: {nvidia.com/gpu: "1"}
+

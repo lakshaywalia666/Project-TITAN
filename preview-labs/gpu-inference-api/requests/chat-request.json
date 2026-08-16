@@ -1,0 +1,16 @@
+{
+  "model": "titan-preview",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a concise teaching assistant for a beginner learning AI infrastructure."
+    },
+    {
+      "role": "user",
+      "content": "Explain the difference between a model, a model server, and an API in three short bullet points."
+    }
+  ],
+  "temperature": 0.2,
+  "max_tokens": 160
+}
+

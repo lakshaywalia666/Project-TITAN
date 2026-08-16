@@ -1,0 +1,31 @@
+receivers:
+  otlp:
+    protocols:
+      grpc: {endpoint: 0.0.0.0:4317}
+      http: {endpoint: 0.0.0.0:4318}
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+  batch:
+    timeout: 2s
+    send_batch_size: 512
+  attributes/redact:
+    actions:
+      - {key: http.request.header.authorization, action: delete}
+      - {key: db.statement, action: delete}
+
+exporters:
+  debug: {verbosity: basic}
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls: {insecure: true}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, batch]
+      exporters: [otlp/tempo, debug]
+

@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+exec > >(tee -a /var/log/titan-bootstrap.log) 2>&1
+umask 077
+
+TITAN_IMAGE='${titan_image}'
+TITAN_ROOT=/etc/titan
+TITAN_BIN=/usr/local/sbin
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install --yes --no-install-recommends ca-certificates curl docker.io openssl
+systemctl enable --now docker
+
+# The GCP free-tier e2-micro is memory-constrained. A small encrypted-at-rest cloud
+# disk swap file prevents transient package/container startup OOMs in this smoke lab.
+if [ "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" -lt 2000000 ] && [ ! -f /swapfile ]; then
+  fallocate -l 1G /swapfile
+  chmod 0600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+install -d -m 0700 "$TITAN_ROOT"
+if [ ! -s "$TITAN_ROOT/admin-token" ]; then
+  openssl rand -hex 32 > "$TITAN_ROOT/admin-token"
+fi
+ADMIN_TOKEN="$(tr -d '\r\n' < "$TITAN_ROOT/admin-token")"
+
+cat > "$TITAN_ROOT/control.env" <<EOF
+TITAN_ADMIN_TOKEN=$ADMIN_TOKEN
+TITAN_DATABASE=/var/lib/titan/titan-control.db
+TITAN_CONTROL_HOST=0.0.0.0
+TITAN_CONTROL_PORT=8090
+TITAN_CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+EOF
+
+cat > "$TITAN_ROOT/controller.env" <<EOF
+TITAN_DATABASE=/var/lib/titan/titan-control.db
+TITAN_RECONCILE_INTERVAL_SECONDS=2
+TITAN_RECONCILE_BATCH_SIZE=20
+EOF
+
+cat > "$TITAN_ROOT/ai.env" <<EOF
+TITAN_ADMIN_TOKEN=$ADMIN_TOKEN
+TITAN_AI_HOST=0.0.0.0
+TITAN_AI_PORT=8100
+TITAN_KNOWLEDGE_DATABASE=/var/lib/titan/titan-knowledge.db
+TITAN_AI_ALLOWED_MODELS_JSON={"local":["titan-offline"]}
+TITAN_AI_TOKEN_BUDGETS_JSON={"local":100000}
+TITAN_AI_REQUEST_LIMITS_JSON={"local":60}
+EOF
+
+cat > "$TITAN_ROOT/shop.env" <<EOF
+TITAN_ADMIN_TOKEN=$ADMIN_TOKEN
+TITAN_SHOP_HOST=0.0.0.0
+TITAN_SHOP_PORT=8200
+TITAN_SHOP_DATABASE=/var/lib/titan/titan-shop.db
+EOF
+chmod 0600 "$TITAN_ROOT"/*.env "$TITAN_ROOT/admin-token"
+
+cat > "$TITAN_BIN/titan-down" <<'SCRIPT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+for container in titan-shop titan-ai titan-controller titan-control; do
+  docker rm --force "$container" >/dev/null 2>&1 || true
+done
+SCRIPT
+
+cat > "$TITAN_BIN/titan-up" <<'SCRIPT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IMAGE='${titan_image}'
+COMMON=(
+  --detach
+  --restart unless-stopped
+  --network titan
+  --read-only
+  --tmpfs /tmp:rw,noexec,nosuid,size=32m
+  --cap-drop ALL
+  --security-opt no-new-privileges
+  --pids-limit 128
+  --log-driver json-file
+  --log-opt max-size=10m
+  --log-opt max-file=3
+  --label platform.titan.dev/lab=true
+)
+
+docker pull "$IMAGE"
+docker network inspect titan >/dev/null 2>&1 || docker network create titan >/dev/null
+for volume in titan-control-data titan-ai-data titan-shop-data; do
+  docker volume inspect "$volume" >/dev/null 2>&1 || docker volume create "$volume" >/dev/null
+  docker run --rm --user 0 --volume "$volume:/var/lib/titan" \
+    "$IMAGE" chown 10001:10001 /var/lib/titan
+done
+/usr/local/sbin/titan-down
+
+docker run "$${COMMON[@]}" --name titan-control --memory 160m --cpus 0.50 \
+  --env-file /etc/titan/control.env \
+  --publish 127.0.0.1:8090:8090 \
+  --volume titan-control-data:/var/lib/titan \
+  "$IMAGE" python -m titan_control.api_main
+
+for attempt in $(seq 1 60); do
+  curl --fail --silent http://127.0.0.1:8090/healthz >/dev/null && break
+  if [ "$attempt" -eq 60 ]; then
+    docker logs titan-control
+    exit 1
+  fi
+  sleep 2
+done
+
+docker run "$${COMMON[@]}" --no-healthcheck \
+  --name titan-controller --memory 128m --cpus 0.35 \
+  --env-file /etc/titan/controller.env \
+  --volume titan-control-data:/var/lib/titan \
+  "$IMAGE" python -m titan_control.controller
+
+docker run "$${COMMON[@]}" --no-healthcheck \
+  --name titan-ai --memory 192m --cpus 0.50 \
+  --env-file /etc/titan/ai.env \
+  --publish 127.0.0.1:8100:8100 \
+  --volume titan-ai-data:/var/lib/titan \
+  "$IMAGE" python -m titan_ai.api_main
+
+docker run "$${COMMON[@]}" --no-healthcheck \
+  --name titan-shop --memory 160m --cpus 0.50 \
+  --env-file /etc/titan/shop.env \
+  --publish 127.0.0.1:8200:8200 \
+  --volume titan-shop-data:/var/lib/titan \
+  "$IMAGE" python -m titan_workloads.shop_main
+SCRIPT
+
+cat > "$TITAN_BIN/titan-health" <<'SCRIPT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+TOKEN="$(cat /etc/titan/admin-token)"
+
+for endpoint in \
+  http://127.0.0.1:8090/healthz \
+  http://127.0.0.1:8100/readyz \
+  http://127.0.0.1:8200/healthz; do
+  for attempt in $(seq 1 90); do
+    curl --fail --silent "$endpoint" >/dev/null && break
+    if [ "$attempt" -eq 90 ]; then
+      echo "health check failed: $endpoint" >&2
+      docker ps --all
+      exit 1
+    fi
+    sleep 2
+  done
+done
+
+curl --fail --silent \
+  --header "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:8090/v1/projects >/dev/null
+curl --fail --silent \
+  --header "Authorization: Bearer $TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"project_id":"local"}' \
+  http://127.0.0.1:8100/v1/budgets >/dev/null
+curl --fail --silent http://127.0.0.1:8200/v1/catalog >/dev/null
+echo TITAN_SMOKE_OK
+SCRIPT
+
+chmod 0755 "$TITAN_BIN/titan-up" "$TITAN_BIN/titan-down" "$TITAN_BIN/titan-health"
+
+cat > /etc/systemd/system/titan-smoke.service <<'UNIT'
+[Unit]
+Description=Project TITAN disposable cloud smoke environment
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/titan-up
+ExecStartPost=/usr/local/sbin/titan-health
+ExecStop=/usr/local/sbin/titan-down
+TimeoutStartSec=600
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now titan-smoke.service

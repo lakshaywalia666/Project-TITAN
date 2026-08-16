@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: titan-control-plane
+  namespace: titan-system
+data:
+  TITAN_DATABASE: /var/lib/titan/titan-control.db
+  TITAN_CONTROL_HOST: 0.0.0.0
+  TITAN_CONTROL_PORT: "8090"
+  TITAN_RECONCILE_INTERVAL_SECONDS: "2"
+  TITAN_RECONCILE_BATCH_SIZE: "20"
+  TITAN_JWT_ISSUER: titan-local
+  TITAN_JWT_AUDIENCE: titan
+  TITAN_AI_HOST: 0.0.0.0
+  TITAN_AI_PORT: "8100"
+  TITAN_KNOWLEDGE_DATABASE: /var/lib/titan/titan-knowledge.db
+  TITAN_AI_ALLOWED_MODELS_JSON: '{"local":["titan-offline"]}'
+  TITAN_AI_TOKEN_BUDGETS_JSON: '{"local":100000}'
+  TITAN_AI_REQUEST_LIMITS_JSON: '{"local":60}'

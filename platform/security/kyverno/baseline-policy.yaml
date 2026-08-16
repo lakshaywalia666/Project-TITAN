@@ -1,0 +1,45 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: titan-runtime-baseline
+  annotations:
+    policies.kyverno.io/title: Titan runtime baseline
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: reject-latest-images
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [titan-system]
+      validate:
+        message: Images must use an immutable digest or an explicit non-latest version.
+        foreach:
+          - list: request.object.spec.containers
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.image }}"
+                    operator: EndsWith
+                    value: ":latest"
+    - name: require-restricted-container
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [titan-system]
+      validate:
+        message: Titan containers must be non-root, read-only and drop all capabilities.
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop: [ALL]
+

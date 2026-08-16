@@ -1,0 +1,33 @@
+[Unit]
+Description=Project Titan reconciliation controller
+After=titan-control-plane.service
+Wants=titan-control-plane.service
+
+[Service]
+Type=simple
+User={{ titan_operator_user }}
+Group={{ titan_operator_user }}
+WorkingDirectory={{ titan_install_root }}
+Environment=PYTHONPATH={{ titan_install_root }}/src
+Environment=TITAN_DATABASE={{ titan_data_root }}/titan-control.db
+Environment=TITAN_RECONCILE_INTERVAL_SECONDS=2
+Environment=TITAN_RECONCILE_BATCH_SIZE=20
+ExecStart=/usr/bin/python3 -m titan_control.controller
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths={{ titan_data_root }}
+
+[Install]
+WantedBy=multi-user.target

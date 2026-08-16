@@ -1,0 +1,43 @@
+name: titan-gpu-preview
+
+services:
+  model-server:
+    image: ${VLLM_IMAGE}
+    ipc: host
+    restart: "no"
+    ports:
+      # Localhost binding prevents direct public Internet access.
+      - "127.0.0.1:8000:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      # The model remains cached when only the container is restarted.
+      - model-cache:/root/.cache/huggingface
+    command:
+      - --model
+      - ${MODEL_ID}
+      - --served-model-name
+      - ${SERVED_MODEL_NAME}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --dtype
+      - auto
+      - --max-model-len
+      - ${MAX_MODEL_LEN}
+      - --gpu-memory-utilization
+      - ${GPU_MEMORY_UTILIZATION}
+      - --api-key
+      - ${API_KEY}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  model-cache:
+

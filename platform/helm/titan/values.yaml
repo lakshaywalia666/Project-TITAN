@@ -1,0 +1,30 @@
+image:
+  repository: ghcr.io/example/titan
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+controlPlane:
+  adminTokenSecretName: titan-control-plane-secrets
+  storage: 2Gi
+  storageClassName: ""
+  reconcileIntervalSeconds: 2
+
+ai:
+  enabled: true
+  port: 8100
+  offlineModel: titan-offline
+  localTokenBudget: 100000
+
+service:
+  port: 8090
+
+resources:
+  api:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  controller:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+  ai:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 1Gi}

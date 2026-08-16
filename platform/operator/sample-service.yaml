@@ -1,0 +1,10 @@
+apiVersion: platform.titan.dev/v1alpha1
+kind: TitanService
+metadata:
+  name: titan-shop
+  namespace: titan-system
+spec:
+  image: ghcr.io/example/titan-shop@sha256:replace-with-built-digest
+  replicas: 1
+  port: 8080
+

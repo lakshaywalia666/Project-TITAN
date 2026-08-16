@@ -1,0 +1,229 @@
+name: titan
+
+x-runtime-security: &runtime-security
+  read_only: true
+  init: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+
+x-control-state: &control-state
+  TITAN_DATABASE: /var/lib/titan/titan-control.db
+
+services:
+  volume-init:
+    <<: *runtime-security
+    build:
+      context: .
+      dockerfile: Containerfile
+    user: "0:0"
+    cap_add: [CHOWN]
+    command: ["chown", "-R", "10001:10001", "/state/control", "/state/ai", "/state/shop", "/state/launchpad"]
+    volumes:
+      - control-data:/state/control
+      - ai-data:/state/ai
+      - shop-data:/state/shop
+      - launchpad-data:/state/launchpad
+    restart: "no"
+    healthcheck:
+      disable: true
+
+  reference-api:
+    <<: *runtime-security
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: ["python", "-m", "titan_api"]
+    environment:
+      TITAN_HOST: 0.0.0.0
+      TITAN_PORT: 8080
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
+  control-api:
+    <<: *runtime-security
+    build:
+      context: .
+      dockerfile: Containerfile
+    environment:
+      <<: *control-state
+      TITAN_ADMIN_TOKEN: ${TITAN_ADMIN_TOKEN:?TITAN_ADMIN_TOKEN is required}
+      TITAN_JWT_SECRET: ${TITAN_JWT_SECRET-}
+      TITAN_JWT_ISSUER: ${TITAN_JWT_ISSUER:-titan-local}
+      TITAN_JWT_AUDIENCE: ${TITAN_JWT_AUDIENCE:-titan}
+      TITAN_CONTROL_HOST: 0.0.0.0
+      TITAN_CONTROL_PORT: 8090
+      TITAN_CORS_ALLOWED_ORIGINS: ${TITAN_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+    volumes:
+      - control-data:/var/lib/titan
+    ports:
+      - "127.0.0.1:8090:8090"
+    restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  controller:
+    <<: *runtime-security
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: ["python", "-m", "titan_control.controller"]
+    environment:
+      <<: *control-state
+      TITAN_RECONCILE_INTERVAL_SECONDS: 2
+      TITAN_RECONCILE_BATCH_SIZE: 20
+    volumes:
+      - control-data:/var/lib/titan
+    restart: unless-stopped
+    depends_on:
+      control-api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+  ai-api:
+    <<: *runtime-security
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: ["python", "-m", "titan_ai.api_main"]
+    environment:
+      TITAN_ADMIN_TOKEN: ${TITAN_ADMIN_TOKEN:?TITAN_ADMIN_TOKEN is required}
+      TITAN_JWT_SECRET: ${TITAN_JWT_SECRET-}
+      TITAN_JWT_ISSUER: ${TITAN_JWT_ISSUER:-titan-local}
+      TITAN_JWT_AUDIENCE: ${TITAN_JWT_AUDIENCE:-titan}
+      TITAN_AI_HOST: 0.0.0.0
+      TITAN_AI_PORT: 8100
+      TITAN_CORS_ALLOWED_ORIGINS: ${TITAN_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      TITAN_KNOWLEDGE_DATABASE: /var/lib/titan/titan-knowledge.db
+      TITAN_AI_ALLOWED_MODELS_JSON: '{"local":["titan-offline"]}'
+      TITAN_AI_TOKEN_BUDGETS_JSON: '{"local":100000}'
+      TITAN_AI_REQUEST_LIMITS_JSON: '{"local":60}'
+    volumes:
+      - ai-data:/var/lib/titan
+    ports:
+      - "127.0.0.1:8100:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/readyz', timeout=2).read()"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  launchpad-api:
+    <<: *runtime-security
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: ["python", "-m", "titan_launchpad.api_main"]
+    environment:
+      TITAN_ADMIN_TOKEN: ${TITAN_ADMIN_TOKEN:?TITAN_ADMIN_TOKEN is required}
+      TITAN_JWT_SECRET: ${TITAN_JWT_SECRET-}
+      TITAN_JWT_ISSUER: ${TITAN_JWT_ISSUER:-titan-local}
+      TITAN_JWT_AUDIENCE: ${TITAN_JWT_AUDIENCE:-titan}
+      TITAN_LAUNCHPAD_HOST: 0.0.0.0
+      TITAN_LAUNCHPAD_PORT: 8300
+      TITAN_LAUNCHPAD_DATABASE: /var/lib/titan/titan-launchpad.db
+      TITAN_CORS_ALLOWED_ORIGINS: ${TITAN_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+    volumes:
+      - launchpad-data:/var/lib/titan
+    ports:
+      - "127.0.0.1:8300:8300"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8300/healthz', timeout=2).read()"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  titan-shop:
+    <<: *runtime-security
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: ["python", "-m", "titan_workloads.shop_main"]
+    environment:
+      TITAN_ADMIN_TOKEN: ${TITAN_ADMIN_TOKEN:?TITAN_ADMIN_TOKEN is required}
+      TITAN_JWT_SECRET: ${TITAN_JWT_SECRET-}
+      TITAN_JWT_ISSUER: ${TITAN_JWT_ISSUER:-titan-local}
+      TITAN_JWT_AUDIENCE: ${TITAN_JWT_AUDIENCE:-titan}
+      TITAN_SHOP_HOST: 0.0.0.0
+      TITAN_SHOP_PORT: 8200
+      TITAN_CORS_ALLOWED_ORIGINS: ${TITAN_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      TITAN_SHOP_DATABASE: /var/lib/titan/titan-shop.db
+    volumes:
+      - shop-data:/var/lib/titan
+    ports:
+      - "127.0.0.1:8200:8200"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/healthz', timeout=2).read()"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: [observability]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    volumes:
+      - ./platform/observability/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: [observability]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./platform/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./platform/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  control-data:
+  ai-data:
+  shop-data:
+  launchpad-data:
+  prometheus-data:
+  grafana-data:

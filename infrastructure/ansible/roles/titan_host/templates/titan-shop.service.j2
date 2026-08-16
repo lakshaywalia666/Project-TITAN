@@ -1,0 +1,32 @@
+[Unit]
+Description=Project Titan Shop reference workload
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ titan_operator_user }}
+Group={{ titan_operator_user }}
+WorkingDirectory={{ titan_install_root }}
+Environment=PYTHONPATH={{ titan_install_root }}/src
+EnvironmentFile={{ titan_data_root }}/control-plane.env
+ExecStart=/usr/bin/python3 -m titan_workloads.shop_main
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths={{ titan_data_root }}
+
+[Install]
+WantedBy=multi-user.target
+

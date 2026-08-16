@@ -1,0 +1,7 @@
+---
+- name: Configure Titan container host
+  hosts: titan_hosts
+  become: true
+  roles:
+    - titan_host
+

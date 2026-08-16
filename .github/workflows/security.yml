@@ -1,0 +1,54 @@
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build container
+        run: docker build --file Containerfile --tag titan:scan .
+      - name: Vulnerability and configuration scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: titan:scan
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0.17.7
+        with:
+          image: titan:scan
+          format: cyclonedx-json
+          output-file: titan-sbom.cdx.json
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: titan-sbom
+          path: titan-sbom.cdx.json
+          retention-days: 30
+

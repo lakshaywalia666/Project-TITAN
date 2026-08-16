@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: titan-shop-slo
+  namespace: titan-system
+spec:
+  metrics:
+    - name: error-ratio
+      interval: 1m
+      count: 5
+      successCondition: result[0] < 0.001
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://prometheus.titan-system.svc:9090
+          query: |
+            sum(rate(titan_http_requests_total{service="titan-shop",status_class="5xx"}[5m]))
+            /
+            clamp_min(sum(rate(titan_http_requests_total{service="titan-shop"}[5m])), 0.000001)
+

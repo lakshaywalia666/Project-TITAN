@@ -1,0 +1,91 @@
+name: disposable-cloud-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: One provider only; the workflow destroys it after verification
+        required: true
+        type: choice
+        options: [aws, azure, gcp]
+      image:
+        description: Public ghcr.io TITAN image pinned with @sha256 digest
+        required: true
+        type: string
+      confirmation:
+        description: Enter DEPLOY_AND_DESTROY_TITAN
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: titan-disposable-cloud-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: cloud-smoke
+    env:
+      TITAN_PROVIDER: ${{ inputs.provider }}
+      TITAN_IMAGE: ${{ inputs.image }}
+      TITAN_CONFIRM: ${{ inputs.confirmation }}
+      TITAN_OWNER: ${{ vars.TITAN_OWNER }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_ZONE: ${{ vars.GCP_ZONE }}
+    steps:
+      - name: Require exact confirmation
+        shell: bash
+        run: test "$TITAN_CONFIRM" = DEPLOY_AND_DESTROY_TITAN
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.8.8"
+      - uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Verify this repository's public signed image
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          actual_image="${TITAN_IMAGE%@sha256:*}"
+          test "$actual_image" = "$expected_image"
+          docker buildx imagetools inspect "$TITAN_IMAGE"
+          cosign verify "$TITAN_IMAGE" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/release\\.yml@refs/tags/v[0-9A-Za-z._-]+$"
+
+      - name: Authenticate to AWS with GitHub OIDC
+        if: inputs.provider == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Authenticate to Azure with GitHub OIDC
+        if: inputs.provider == 'azure'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Authenticate to Google Cloud with workload identity
+        if: inputs.provider == 'gcp'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Deploy, verify and always destroy
+        shell: bash
+        run: bash infrastructure/opentofu/scripts/cloud-smoke.sh

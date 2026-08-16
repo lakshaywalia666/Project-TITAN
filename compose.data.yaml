@@ -1,0 +1,89 @@
+name: titan-data
+
+services:
+  postgres:
+    image: postgres:16.6-alpine
+    profiles: [relational, all-data]
+    environment:
+      POSTGRES_DB: titan
+      POSTGRES_USER: titan
+      # The official image refuses first-time initialization when this is empty.
+      # The optional expansion lets unrelated profiles start independently.
+      POSTGRES_PASSWORD: ${TITAN_POSTGRES_PASSWORD-}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U titan -d titan"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.1-alpine
+    profiles: [cache, all-data]
+    command:
+      - /bin/sh
+      - -ec
+      - test -n "$$TITAN_REDIS_PASSWORD" || { echo 'TITAN_REDIS_PASSWORD is required' >&2; exit 64; }; exec redis-server --appendonly yes --requirepass "$$TITAN_REDIS_PASSWORD"
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$TITAN_REDIS_PASSWORD ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    environment:
+      TITAN_REDIS_PASSWORD: ${TITAN_REDIS_PASSWORD-}
+    restart: unless-stopped
+
+  redpanda:
+    image: redpandadata/redpanda:v24.2.18
+    profiles: [streaming, all-data]
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=768M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:29092,external://0.0.0.0:9092
+      - --advertise-kafka-addr=internal://redpanda:29092,external://127.0.0.1:9092
+    ports: ["127.0.0.1:9092:9092"]
+    volumes: [redpanda-data:/var/lib/redpanda/data]
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    profiles: [object, all-data]
+    command:
+      - /bin/sh
+      - -ec
+      - test -n "$$MINIO_ROOT_USER" && test -n "$$MINIO_ROOT_PASSWORD" || { echo 'TITAN_MINIO_USER and TITAN_MINIO_PASSWORD are required' >&2; exit 64; }; exec minio server /data --console-address :9001
+    environment:
+      # MinIO refuses invalid/empty root credentials when this profile starts.
+      MINIO_ROOT_USER: ${TITAN_MINIO_USER-}
+      MINIO_ROOT_PASSWORD: ${TITAN_MINIO_PASSWORD-}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes: [minio-data:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  redpanda-data:
+  minio-data:

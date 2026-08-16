@@ -1,0 +1,40 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: titan-control-plane-default-deny
+  namespace: titan-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: titan-control-plane
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              titan.io/control-client: "true"
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: titan-system
+      ports:
+        - protocol: TCP
+          port: 8090
+        - protocol: TCP
+          port: 8100
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: titan-system
+      ports:
+        - protocol: TCP
+          port: 8000

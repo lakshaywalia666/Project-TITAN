@@ -1,0 +1,29 @@
+{
+  "github": {
+    "repository": "OWNER/REPOSITORY",
+    "branch": "main",
+    "environment": "cloud-smoke"
+  },
+  "cloud": {
+    "defaultProvider": "gcp",
+    "owner": "replace-me",
+    "image": "",
+    "aws": {
+      "roleArn": "",
+      "region": "ap-south-1"
+    },
+    "azure": {
+      "clientId": "",
+      "tenantId": "",
+      "subscriptionId": "",
+      "location": "centralindia"
+    },
+    "gcp": {
+      "workloadIdentityProvider": "",
+      "serviceAccount": "",
+      "projectId": "",
+      "region": "us-central1",
+      "zone": "us-central1-a"
+    }
+  }
+}

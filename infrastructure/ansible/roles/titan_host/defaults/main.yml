@@ -1,0 +1,15 @@
+---
+titan_operator_user: titan-operator
+titan_install_root: /opt/titan
+titan_data_root: /var/lib/titan
+titan_source_root: "{{ playbook_dir }}/../.."
+titan_admin_token: ""
+titan_jwt_secret: ""
+titan_jwt_issuer: titan-local
+titan_jwt_audience: titan
+titan_packages:
+  - ca-certificates
+  - curl
+  - git
+  - python3
+  - python3-venv

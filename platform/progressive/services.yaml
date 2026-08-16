@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: titan-shop-stable
+  namespace: titan-system
+spec:
+  selector: {app.kubernetes.io/name: titan-shop}
+  ports: [{name: http, port: 8200, targetPort: http}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: titan-shop-canary
+  namespace: titan-system
+spec:
+  selector: {app.kubernetes.io/name: titan-shop}
+  ports: [{name: http, port: 8200, targetPort: http}]
+

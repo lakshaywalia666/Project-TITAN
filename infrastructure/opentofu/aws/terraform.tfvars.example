@@ -1,0 +1,7 @@
+aws_region      = "ap-south-1"
+owner           = "replace-me"
+operator_cidr   = "203.0.113.10/32"
+instance_type   = "t3.micro"
+ssh_public_key  = "ssh-ed25519 REPLACE_ME"
+titan_image     = "ghcr.io/replace-me/titan@sha256:replace-with-64-character-image-digest"
+expires_at      = "REPLACE_WITH_NEAR_UTC_DEADLINE"

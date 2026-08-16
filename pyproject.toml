@@ -1,0 +1,19 @@
+[project]
+name = "project-titan"
+version = "0.1.0"
+description = "A zero-cost-first AI-native cloud control plane and engineering laboratory"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+titan = "titan_control.cli:main"
+titan-control-api = "titan_control.api_main:main"
+titan-ai-api = "titan_ai.api_main:main"
+titan-ops = "titan_ops.cli:main"
+titan-shop = "titan_workloads.shop_main:main"
+titan-operator = "titan_operator.controller:main"
+titan-launchpad = "titan_launchpad.cli:main"
+titan-launchpad-api = "titan_launchpad.api_main:main"
+
+[tool.unittest]
+start-directory = "tests"

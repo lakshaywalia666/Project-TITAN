@@ -1,0 +1,89 @@
+---
+- name: Validate required secret input
+  ansible.builtin.assert:
+    that:
+      - titan_admin_token | length >= 24
+      - titan_admin_token is not search('\\s')
+      - titan_jwt_secret | length == 0 or titan_jwt_secret | length >= 32
+    fail_msg: Pass a 24+ character non-whitespace titan_admin_token through Ansible Vault or --extra-vars.
+  no_log: true
+
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name: "{{ titan_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create unprivileged Titan operator account
+  ansible.builtin.user:
+    name: "{{ titan_operator_user }}"
+    shell: /bin/bash
+    create_home: true
+    groups: ""
+    append: false
+
+- name: Create Titan directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ titan_install_root }}", owner: root, group: root, mode: "0755"}
+    - {path: "{{ titan_data_root }}", owner: "{{ titan_operator_user }}", group: "{{ titan_operator_user }}", mode: "0750"}
+
+- name: Install Titan Python source
+  ansible.builtin.copy:
+    src: "{{ titan_source_root }}/src/"
+    dest: "{{ titan_install_root }}/src/"
+    owner: root
+    group: root
+    mode: preserve
+  notify: Restart Titan services
+
+- name: Install Titan version marker
+  ansible.builtin.copy:
+    src: "{{ titan_source_root }}/VERSION"
+    dest: "{{ titan_install_root }}/VERSION"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Titan services
+
+- name: Install protected service environment
+  ansible.builtin.template:
+    src: control-plane.env.j2
+    dest: "{{ titan_data_root }}/control-plane.env"
+    owner: "{{ titan_operator_user }}"
+    group: "{{ titan_operator_user }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart Titan services
+
+- name: Install systemd unit
+  ansible.builtin.template:
+    src: "{{ item }}.service.j2"
+    dest: "/etc/systemd/system/{{ item }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - titan-control-plane
+    - titan-controller
+    - titan-ai
+    - titan-shop
+  notify: Restart Titan services
+
+- name: Enable and start Titan services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - titan-control-plane
+    - titan-controller
+    - titan-ai
+    - titan-shop

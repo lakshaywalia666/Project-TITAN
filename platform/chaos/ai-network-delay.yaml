@@ -1,0 +1,20 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: titan-vllm-delay
+  namespace: titan-chaos
+spec:
+  action: delay
+  mode: one
+  duration: 60s
+  selector:
+    namespaces: [titan-system]
+    labelSelectors:
+      app.kubernetes.io/name: titan-vllm
+      chaos.titan.dev/allowed: "true"
+  delay:
+    latency: 500ms
+    correlation: "50"
+    jitter: 100ms
+  direction: both
+

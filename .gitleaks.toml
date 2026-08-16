@@ -1,0 +1,16 @@
+title = "Project Titan secret detection"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Documentation placeholders are deliberately non-secret"
+paths = [
+  '''\.env\.example$''',
+  '''terraform\.tfvars\.example$'''
+]
+regexes = [
+  '''replace-with-at-least-24-random-characters''',
+  '''not-required'''
+]
+

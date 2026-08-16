@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: titan-gpu-smoke-test
+  namespace: titan-system
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      runtimeClassName: nvidia
+      containers:
+        - name: smoke
+          image: nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+          command: ["nvidia-smi"]
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+

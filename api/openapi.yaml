@@ -1,0 +1,511 @@
+openapi: 3.1.0
+info:
+  title: Project Titan APIs
+  version: 0.1.0
+  description: Control-plane, AI/knowledge, Cloud Launchpad and Titan Shop contracts for the local reference system.
+servers:
+  - {url: 'http://localhost:8090', description: Control API}
+  - {url: 'http://localhost:8100', description: AI API}
+  - {url: 'http://localhost:8200', description: Titan Shop}
+  - {url: 'http://localhost:8300', description: Cloud Launchpad}
+security:
+  - bearerAuth: []
+paths:
+  /v1/projects:
+    get:
+      operationId: listProjects
+      responses:
+        '200':
+          description: Authorized projects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties: {items: {type: array, items: {$ref: '#/components/schemas/Project'}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createProject
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, pattern: '^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$'}
+                quota: {type: object, additionalProperties: {type: integer, minimum: 0}}
+      responses:
+        '201':
+          description: Project created or idempotently replayed
+          content: {application/json: {schema: {$ref: '#/components/schemas/Project'}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/projects/{projectId}/resources:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: listResources
+      responses:
+        '200':
+          description: Project resources
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {items: {type: array, items: {$ref: '#/components/schemas/Resource'}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createResource
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ResourceCreate'}}}
+      responses:
+        '202':
+          description: Desired state accepted
+          content: {application/json: {schema: {$ref: '#/components/schemas/Resource'}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/resources/{resourceId}:
+    parameters:
+      - name: resourceId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getResource
+      responses:
+        '200':
+          description: Current desired and observed resource state
+          headers: {ETag: {schema: {type: string}}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/Resource'}}}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateResource
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema: {type: integer, minimum: 1}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [spec]
+              properties: {spec: {type: object}}
+      responses:
+        '202':
+          description: New generation accepted
+          content: {application/json: {schema: {$ref: '#/components/schemas/Resource'}}}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteResource
+      responses:
+        '202':
+          description: Deletion requested; final state is asynchronous
+          content: {application/json: {schema: {$ref: '#/components/schemas/Resource'}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/reconcile:
+    post:
+      operationId: reconcile
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {limit: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses:
+        '200':
+          description: Bounded reconciliation summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  claimed: {type: integer}
+                  succeeded: {type: integer}
+                  failed: {type: integer}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/audit:
+    get:
+      operationId: listAuditEvents
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500, default: 100}
+      responses:
+        '200':
+          description: Append-only authorization and mutation audit events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {items: {type: array, items: {type: object}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/operations:
+    get:
+      operationId: listOperations
+      parameters:
+        - name: resource_id
+          in: query
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500, default: 100}
+      responses:
+        '200':
+          description: Durable reconciliation operation ledger
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {items: {type: array, items: {type: object}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/projects/{projectId}/usage:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      operationId: getProjectUsage
+      responses:
+        '200':
+          description: Metered resource usage grouped by kind
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {items: {type: array, items: {type: object}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, messages]
+              properties:
+                project_id: {type: string}
+                model: {type: string}
+                messages:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role: {enum: [system, user, assistant, tool]}
+                      content: {type: string, minLength: 1}
+                max_tokens: {type: integer, minimum: 1, maximum: 8192, default: 256}
+                temperature: {type: number, minimum: 0, maximum: 2, default: 0}
+      responses:
+        '200':
+          description: OpenAI-shaped completion plus Titan routing metadata
+          content: {application/json: {schema: {type: object}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/knowledge/documents:
+    post:
+      operationId: upsertKnowledgeDocument
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, knowledge_base_id, source_id, content, acl]
+              properties:
+                project_id: {type: string}
+                knowledge_base_id: {type: string}
+                source_id: {type: string}
+                content: {type: string, minLength: 1}
+                acl:
+                  type: object
+                  properties:
+                    public: {type: boolean, default: false}
+                    subjects: {type: array, items: {type: string}}
+                    projects: {type: array, items: {type: string}}
+                metadata: {type: object}
+      responses:
+        '201': {description: Versioned document ingested}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/knowledge/search:
+    post:
+      operationId: searchKnowledge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, knowledge_base_id, query]
+              properties:
+                project_id: {type: string}
+                knowledge_base_id: {type: string}
+                query: {type: string, minLength: 1}
+                limit: {type: integer, minimum: 1, maximum: 20, default: 5}
+      responses:
+        '200': {description: Authorized ranked chunks and citations}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/budgets:
+    post:
+      operationId: getAIProjectBudget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id]
+              properties: {project_id: {type: string}}
+      responses:
+        '200':
+          description: Current in-process AI token budget
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [used, limit, remaining]
+                properties:
+                  used: {type: integer, minimum: 0}
+                  limit: {type: integer, minimum: 0}
+                  remaining: {type: integer, minimum: 0}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/example:
+    get:
+      security: []
+      operationId: getLaunchpadExample
+      responses:
+        '200':
+          description: Safe example workload; image and budget are intentionally unresolved
+          content: {application/json: {schema: {$ref: '#/components/schemas/LaunchpadWorkload'}}}
+  /v1/assessments:
+    get:
+      operationId: listLaunchpadAssessments
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+      responses:
+        '200':
+          description: Assessments visible to the authenticated identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties: {items: {type: array, items: {$ref: '#/components/schemas/LaunchpadAssessment'}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createLaunchpadAssessment
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/LaunchpadWorkload'}}}
+      responses:
+        '201':
+          description: Persisted deterministic three-cloud assessment
+          content: {application/json: {schema: {$ref: '#/components/schemas/LaunchpadAssessment'}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/assessments/{assessmentId}:
+    parameters:
+      - {$ref: '#/components/parameters/AssessmentId'}
+    get:
+      operationId: getLaunchpadAssessment
+      responses:
+        '200':
+          description: Identity-authorized assessment
+          content: {application/json: {schema: {$ref: '#/components/schemas/LaunchpadAssessment'}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/assessments/{assessmentId}/plans:
+    parameters:
+      - {$ref: '#/components/parameters/AssessmentId'}
+    post:
+      operationId: createLaunchpadPlan
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [provider]
+              properties: {provider: {enum: [aws, azure, gcp]}}
+      responses:
+        '201':
+          description: Guarded dry-run deployment plan; never an applied deployment
+          content: {application/json: {schema: {$ref: '#/components/schemas/LaunchpadPlan'}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/plans/{planId}:
+    parameters:
+      - name: planId
+        in: path
+        required: true
+        schema: {type: string, pattern: '^pln_[0-9a-f]{32}$'}
+    get:
+      operationId: getLaunchpadPlan
+      responses:
+        '200':
+          description: Identity-authorized dry-run plan
+          content: {application/json: {schema: {$ref: '#/components/schemas/LaunchpadPlan'}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/catalog:
+    get:
+      security: []
+      operationId: listCatalog
+      responses:
+        '200': {description: Server-specific public catalog (Shop products on 8200; source-linked cloud services on 8300)}
+  /v1/orders:
+    post:
+      operationId: createOrder
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, items]
+              properties:
+                project_id: {type: string}
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [sku, quantity]
+                    properties:
+                      sku: {type: string}
+                      quantity: {type: integer, minimum: 1, maximum: 20}
+      responses:
+        '201': {description: Idempotent fraud-checked order}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/orders/{orderId}:
+    parameters:
+      - name: orderId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getOrder
+      responses:
+        '200':
+          description: Order visible to its customer or an administrator
+          content: {application/json: {schema: {type: object}}}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema: {type: string}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 200}
+    AssessmentId:
+      name: assessmentId
+      in: path
+      required: true
+      schema: {type: string, pattern: '^asm_[0-9a-f]{32}$'}
+  responses:
+    Error:
+      description: Stable machine-readable failure
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Project:
+      type: object
+      required: [id, name, quota, created_at]
+      properties:
+        id: {type: string}
+        name: {type: string, pattern: '^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$'}
+        quota: {type: object, additionalProperties: {type: integer}}
+        created_at: {type: string, format: date-time}
+    ResourceCreate:
+      type: object
+      required: [kind, name, spec]
+      properties:
+        kind: {enum: [service, database, model, knowledge_base, agent, job]}
+        name: {type: string}
+        spec: {type: object}
+    Resource:
+      allOf:
+        - {$ref: '#/components/schemas/ResourceCreate'}
+        - type: object
+          required: [id, project_id, state, generation, observed_generation]
+          properties:
+            id: {type: string}
+            project_id: {type: string}
+            state: {enum: [PENDING, PROVISIONING, READY, DEGRADED, UPDATING, DELETING, DELETED, FAILED]}
+            generation: {type: integer, minimum: 1}
+            observed_generation: {type: integer, minimum: 0}
+            deletion_requested: {type: boolean}
+            status: {type: object}
+    LaunchpadWorkload:
+      type: object
+      additionalProperties: false
+      required: [name, repository_url]
+      properties:
+        name: {type: string, pattern: '^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$'}
+        repository_url: {type: string, format: uri, pattern: '^https://github\.com/'}
+        image: {type: string, pattern: '^ghcr\.io/.+@sha256:[0-9a-f]{64}$', default: ''}
+        container_port: {type: integer, minimum: 1, maximum: 65535, default: 8080}
+        health_path: {type: string, pattern: '^/', default: '/healthz'}
+        environment: {enum: [development, staging, production], default: development}
+        geography: {enum: [india, us, europe, global], default: india}
+        monthly_requests: {type: integer, minimum: 0, maximum: 2000000000, default: 10000}
+        cpu_millicores: {type: integer, minimum: 100, maximum: 8000, default: 500}
+        memory_mb: {type: integer, minimum: 128, maximum: 32768, default: 512}
+        min_instances: {type: integer, minimum: 0, maximum: 20, default: 0}
+        max_instances: {type: integer, minimum: 1, maximum: 100, default: 3}
+        scale_to_zero: {type: boolean, default: true}
+        public_access: {type: boolean, default: true}
+        database: {enum: [none, postgresql], default: none}
+        object_storage: {type: boolean, default: false}
+        background_worker: {type: boolean, default: false}
+        availability: {enum: [standard, high], default: standard}
+        data_classification: {enum: [public, internal, confidential, restricted], default: internal}
+        budget_usd_month: {type: number, minimum: 0, maximum: 1000000, default: 0}
+    LaunchpadAssessment:
+      type: object
+      required: [id, workload, deployment_readiness, blockers, recommendations, cloud_mutation_performed]
+      properties:
+        id: {type: string, pattern: '^asm_[0-9a-f]{32}$'}
+        workload: {$ref: '#/components/schemas/LaunchpadWorkload'}
+        deployment_readiness: {enum: [BLOCKED, READY_FOR_PROVIDER_SELECTION]}
+        recommended_provider: {enum: [aws, azure, gcp]}
+        blockers: {type: array, items: {type: string}}
+        warnings: {type: array, items: {type: string}}
+        recommendations: {type: array, minItems: 3, maxItems: 3, items: {type: object}}
+        cloud_mutation_performed: {type: boolean, const: false}
+    LaunchpadPlan:
+      type: object
+      required: [id, assessment_id, provider, status, resources, cloud_mutation_performed]
+      properties:
+        id: {type: string, pattern: '^pln_[0-9a-f]{32}$'}
+        assessment_id: {type: string, pattern: '^asm_[0-9a-f]{32}$'}
+        provider: {enum: [aws, azure, gcp]}
+        status: {enum: [BLOCKED, READY_FOR_CREDENTIALS]}
+        resources: {type: array, items: {type: object}}
+        blockers: {type: array, items: {type: string}}
+        cloud_mutation_performed: {type: boolean, const: false}
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            request_id: {type: string}

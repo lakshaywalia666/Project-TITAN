@@ -1,0 +1,15 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: titan-controller-kill
+  namespace: titan-chaos
+spec:
+  action: pod-kill
+  mode: one
+  duration: 30s
+  selector:
+    namespaces: [titan-system]
+    labelSelectors:
+      app.kubernetes.io/name: titan-control-plane
+      chaos.titan.dev/allowed: "true"
+
