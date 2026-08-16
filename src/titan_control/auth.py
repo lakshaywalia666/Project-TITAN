@@ -7,7 +7,7 @@ import hmac
 import json
 import os
 import time
-from base64 import urlsafe_b64decode
+from base64 import b64decode, urlsafe_b64encode
 from dataclasses import dataclass
 from typing import Mapping, Protocol
 
@@ -239,5 +239,11 @@ def _bearer_token(authorization_header: str | None) -> str:
 
 
 def _decode_segment(value: str) -> bytes:
+    if not value or "=" in value:
+        raise ValueError("JWT segments must use unpadded Base64URL")
     padding = "=" * (-len(value) % 4)
-    return urlsafe_b64decode(value + padding)
+    decoded = b64decode(value + padding, altchars=b"-_", validate=True)
+    canonical = urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii")
+    if not hmac.compare_digest(canonical, value):
+        raise ValueError("JWT segment is not canonical Base64URL")
+    return decoded
